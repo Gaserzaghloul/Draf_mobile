@@ -238,42 +238,41 @@ class DatabaseService {
     );
   }
 
-  // Activity operations
-  static Future<String> insertActivity(Activity activity) async {
+  // Message operations
+  static Future<String> insertMessage(Message message) async {
     final db = await database;
-    await db.insert('activities', activity.toMap());
-    return activity.id;
+    await db.insert('messages', message.toMap());
+    return message.id;
   }
 
-  static Future<List<Activity>> getActivitiesForUser(String userId) async {
+  static Future<List<Message>> getMessagesBetweenUsers(
+    String userId1,
+    String userId2,
+  ) async {
     final db = await database;
     final maps = await db.query(
-      'activities',
-      where: 'userId = ?',
-      whereArgs: [userId],
-      orderBy: 'timestamp DESC',
+      'messages',
+      where:
+          '(senderId = ? AND receiverId = ?) OR (senderId = ? AND receiverId = ?)',
+      whereArgs: [userId1, userId2, userId2, userId1],
+      orderBy: 'timestamp ASC',
     );
-    return maps.map((map) => Activity.fromMap(map)).toList();
+    return maps.map((map) => Message.fromMap(map)).toList();
   }
 
-  static Future<List<Activity>> getAllActivities() async {
+  static Future<List<Message>> getAllMessages() async {
     final db = await database;
-    final maps = await db.query('activities', orderBy: 'timestamp DESC');
-    return maps.map((map) => Activity.fromMap(map)).toList();
+    final maps = await db.query('messages', orderBy: 'timestamp DESC');
+    return maps.map((map) => Message.fromMap(map)).toList();
   }
 
-  // Utility methods
-  static Future<void> closeDatabase() async {
+  static Future<int> updateMessage(Message message) async {
     final db = await database;
-    await db.close();
-  }
-
-  static Future<void> clearAllData() async {
-    final db = await database;
-    await db.delete('activities');
-    await db.delete('resources');
-    await db.delete('messages');
-    await db.delete('connected_devices');
-    await db.delete('users');
+    return await db.update(
+      'messages',
+      message.toMap(),
+      where: 'id = ?',
+      whereArgs: [message.id],
+    );
   }
 }
