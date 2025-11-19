@@ -238,7 +238,7 @@ class DatabaseService {
     );
   }
 
-  // Message operations
+  // Message operations-Ahmed
   static Future<String> insertMessage(Message message) async {
     final db = await database;
     await db.insert('messages', message.toMap());
@@ -274,5 +274,67 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [message.id],
     );
+  }
+
+  // Resource operations- adham
+  static Future<String> insertResource(Resource resource) async {
+    final db = await database;
+    await db.insert('resources', resource.toMap());
+    return resource.id;
+  }
+
+  static Future<List<Resource>> getAllResources() async {
+    final db = await database;
+    final maps = await db.query('resources', orderBy: 'createdAt DESC');
+    return maps.map((map) => Resource.fromMap(map)).toList();
+  }
+
+  static Future<int> updateResource(Resource resource) async {
+    final db = await database;
+    return await db.update(
+      'resources',
+      resource.toMap(),
+      where: 'id = ?',
+      whereArgs: [resource.id],
+    );
+  }
+
+  // Activity operations
+  static Future<String> insertActivity(Activity activity) async {
+    final db = await database;
+    await db.insert('activities', activity.toMap());
+    return activity.id;
+  }
+
+  static Future<List<Activity>> getActivitiesForUser(String userId) async {
+    final db = await database;
+    final maps = await db.query(
+      'activities',
+      where: 'userId = ?',
+      whereArgs: [userId],
+      orderBy: 'timestamp DESC',
+    );
+    return maps.map((map) => Activity.fromMap(map)).toList();
+  }
+
+  static Future<List<Activity>> getAllActivities() async {
+    final db = await database;
+    final maps = await db.query('activities', orderBy: 'timestamp DESC');
+    return maps.map((map) => Activity.fromMap(map)).toList();
+  }
+
+  // Utility methods
+  static Future<void> closeDatabase() async {
+    final db = await database;
+    await db.close();
+  }
+
+  static Future<void> clearAllData() async {
+    final db = await database;
+    await db.delete('activities');
+    await db.delete('resources');
+    await db.delete('messages');
+    await db.delete('connected_devices');
+    await db.delete('users');
   }
 }
