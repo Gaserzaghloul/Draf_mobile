@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/user_provider.dart';
+import '../services/voice_command_service.dart';
 
 class ProfilePage extends StatefulWidget {
   final bool isFirstTime;
@@ -45,10 +46,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _loadUserProfile() {
-    final userProvider = Provider.of<UserProvider>(
-      context,
-      listen: false,
-    ); // REC-3
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
     if (userProvider.currentUser != null) {
       _nameController.text = userProvider.currentUser!.name;
       _emailController.text = userProvider.currentUser!.email;
@@ -71,10 +69,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _saveProfile() async {
     if (_formKey.currentState!.validate()) {
-      final userProvider = Provider.of<UserProvider>(
-        context,
-        listen: false,
-      ); // REC-3
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
 
       if (userProvider.currentUser != null) {
         try {
@@ -96,7 +91,7 @@ class _ProfilePageState extends State<ProfilePage> {
             isProfileComplete: true, // Mark profile as complete
           );
 
-          await userProvider.updateUser(updatedUser); // REC-3
+          await userProvider.updateUser(updatedUser);
 
           if (mounted) {
             setState(() {
@@ -139,6 +134,34 @@ class _ProfilePageState extends State<ProfilePage> {
         automaticallyImplyLeading:
             !widget.isFirstTime, // Disable back button for first-time users
         actions: [
+          IconButton(
+            onPressed: () async {
+              // Initialize voice service if needed (though usually done at app start)
+              await VoiceCommandService().initialize();
+
+              if (context.mounted) {
+                await VoiceCommandService().startListening(
+                  context: context,
+                  intents: {
+                    'start editing': (ctx) async {
+                      setState(() {
+                        _isEditing = true;
+                      });
+                    },
+                    'save profile': (ctx) async => _saveProfile(),
+                    'cancel editing': (ctx) async {
+                      setState(() {
+                        _isEditing = false;
+                        _loadUserProfile();
+                      });
+                    },
+                  },
+                );
+              }
+            },
+            icon: const Icon(Icons.mic),
+            tooltip: 'Voice commands (English)',
+          ),
           if (_isEditing)
             TextButton(
               onPressed: _saveProfile,
