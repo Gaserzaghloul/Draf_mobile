@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/network_provider.dart';
 import 'profile_page.dart';
 import 'network_dashboard_page.dart';
+import '../services/voice_command_service.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -16,12 +17,44 @@ class _LandingPageState extends State<LandingPage> {
   @override
   void initState() {
     super.initState();
+    // We kickstart the voice service here so it's ready for the fab mic button.
+    VoiceCommandService().initialize();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // The floating mic button allows voice navigation from the home screen.
+      // E.g. "Join network" or "Open Settings".
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          await VoiceCommandService().startListening(
+            context: context,
+            intents: {
+              'join,connect': (ctx) async {
+                await VoiceCommandService().speak(
+                  "Scanning for nearby networks. Please wait.",
+                );
+                _joinNetwork();
+              },
+              'start,create,host': (ctx) async {
+                await VoiceCommandService().speak(
+                  "Creating a new beacon network.",
+                );
+                _startNetwork();
+              },
+              'profile,settings,me': (ctx) async {
+                await VoiceCommandService().speak("Opening profile settings.");
+                _goToProfile();
+              },
+            },
+          );
+        },
+        backgroundColor: Colors.white,
+        child: const Icon(Icons.mic, color: Color(0xFF1E3A8A)),
+      ),
       body: Container(
+        // Using a gradient background to give it that premium feel
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -35,7 +68,7 @@ class _LandingPageState extends State<LandingPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Title (icon removed)
+                // Branding Section: Title and Tagline
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -73,7 +106,8 @@ class _LandingPageState extends State<LandingPage> {
 
                 const SizedBox(height: 60),
 
-                // Main Action Buttons
+                // Main Navigation Buttons
+                // 1. Join functionality for Clients
                 _buildActionButton(
                   icon: Icons.person_add,
                   title: 'Join Existing Network',
@@ -83,6 +117,7 @@ class _LandingPageState extends State<LandingPage> {
 
                 const SizedBox(height: 20),
 
+                // 2. Hosting functionality for Group Owners
                 _buildActionButton(
                   icon: Icons.wifi_tethering,
                   title: 'Start New Network',
@@ -92,6 +127,7 @@ class _LandingPageState extends State<LandingPage> {
 
                 const SizedBox(height: 20),
 
+                // 3. Personal User settings
                 _buildActionButton(
                   icon: Icons.person,
                   title: 'Profile Settings',
@@ -101,7 +137,8 @@ class _LandingPageState extends State<LandingPage> {
 
                 const SizedBox(height: 40),
 
-                // Status Indicator
+                // Live Connection Status Indicator
+                // Listen to the provider to update this pill-shaped indicator in real-time
                 Consumer<NetworkProvider>(
                   builder: (context, networkProvider, child) {
                     return Container(
@@ -158,6 +195,7 @@ class _LandingPageState extends State<LandingPage> {
     );
   }
 
+  // Helper widget to keep the button styling consistent and clean
   Widget _buildActionButton({
     required IconData icon,
     required String title,
@@ -222,28 +260,26 @@ class _LandingPageState extends State<LandingPage> {
     );
   }
 
-  // Join an existing P2P network. // REC-2
+  // Attempts to find and connect to a nearby host device.
   void _joinNetwork() async {
     final networkProvider = Provider.of<NetworkProvider>(
       context,
       listen: false,
     );
 
-    // Show scanning dialog.
+    // Pop up a loading spinner so the user knows we're searching.
     if (mounted) {
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (context) => _ScanningDialog(
           onTimeout: () {
-            // Handle scan timeout. // REC-2
+            // If scanning takes too long, we kill the dialog and let them know.
             if (mounted) {
               Navigator.pop(context); // Close loading dialog
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text(
-                    'No networks found. Try starting one or scan again.',
-                  ),
+                  content: Text('No BEACON networks nearby'),
                   backgroundColor: Colors.orange,
                   duration: Duration(seconds: 4),
                 ),
@@ -254,20 +290,20 @@ class _LandingPageState extends State<LandingPage> {
       );
     }
 
-    // Attempt to join. // REC-2
-    final joined = await networkProvider.joinExistingNetwork(); // REC-2
+    // This is where the actual P2P connection connection magic happens.
+    final joined = await networkProvider.joinExistingNetwork();
 
     if (mounted) {
       Navigator.pop(context); // Close loading dialog
 
       if (joined) {
-        // Navigate to dashboard on success.
+        // Success! Take them to the main network dashboard.
         Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const NetworkDashboardPage()),
         );
       } else {
-        // Show error on failure.
+        // Something went wrong (permissions, no devices, etc).
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -281,14 +317,14 @@ class _LandingPageState extends State<LandingPage> {
     }
   }
 
-  // Create and host a new network. // REC-2
+  // Configures this device as the Group Owner (Host) so others can join.
   void _startNetwork() async {
     final networkProvider = Provider.of<NetworkProvider>(
       context,
       listen: false,
-    ); // REC-2
+    );
 
-    // Show creation dialog.
+    // Show a spinner while we initialize the group.
     if (mounted) {
       showDialog(
         context: context,
@@ -317,9 +353,9 @@ class _LandingPageState extends State<LandingPage> {
       );
     }
 
-    // Begin advertising. // REC-2
-    debugPrint('LandingPage: Starting new network...'); // REC-2
-    final started = await networkProvider.startNewNetwork(); // REC-2
+    // Begin broadcasting our presence to nearby devices.
+    debugPrint('LandingPage: Starting new network...');
+    final started = await networkProvider.startNewNetwork();
     debugPrint('LandingPage: startNewNetwork() returned: $started');
 
     if (mounted) {
@@ -327,14 +363,14 @@ class _LandingPageState extends State<LandingPage> {
 
       if (started) {
         debugPrint('LandingPage: ✅ Network started, navigating to dashboard');
-        // Navigate to dashboard.
+        // Success, go to dashboard.
         Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const NetworkDashboardPage()),
         );
       } else {
         debugPrint('LandingPage: ❌ Network start failed');
-        // Show error on failure.
+        // If it fails, it's usually permission related or the WiFi is busy.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -356,7 +392,7 @@ class _LandingPageState extends State<LandingPage> {
   }
 }
 
-// Dialog for scanning progress with timeout.
+// A custom dialouge widget to handle the scanning UI and timeout logic.
 class _ScanningDialog extends StatefulWidget {
   final VoidCallback onTimeout;
 
@@ -370,7 +406,7 @@ class _ScanningDialogState extends State<_ScanningDialog> {
   @override
   void initState() {
     super.initState();
-    // Auto-timeout after 30 seconds.
+    // We set a hard limit of 30 seconds for scanning so the user isn't stuck forever.
     Timer(const Duration(seconds: 30), () {
       if (mounted) {
         widget.onTimeout();
