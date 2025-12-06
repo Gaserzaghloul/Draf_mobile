@@ -7,10 +7,12 @@ import '../models/user.dart';
 import '../models/activity.dart';
 import '../database/database_service.dart';
 import 'p2p_service.dart';
+import 'notification_service.dart';
 
 class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Services
   final P2PService _p2pService = P2PService();
+  final NotificationService _notificationService = NotificationService();
 
   // State
   final List<ConnectedDevice> _connectedDevices = [];
@@ -124,6 +126,9 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       _connectedDevices.clear();
 
+      // Ensure clean start
+      await stopNetwork();
+
       if (!_p2pService.isInitialized) {
         if (!await initializeP2P()) return false;
       }
@@ -142,6 +147,10 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
           'Started new P2P network',
         );
         notifyListeners();
+
+        // Start sending Heartbeat (I am alive)
+        _startHeartbeat();
+
         return true;
       }
       return false;
@@ -162,6 +171,9 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (!_p2pService.isInitialized) {
         if (!await initializeP2P()) return false;
       }
+
+      // Start Watchdog to detect if Host dies silently
+      _startWatchdog();
 
       final scanningStarted = await _p2pService.startScanning();
 
@@ -190,6 +202,9 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> stopNetwork() async {
+    _stopHeartbeat();
+    _stopWatchdog();
+
     await _p2pService.stopScanning();
     await _p2pService.stopAdvertising();
     _isDiscovering = false;
@@ -211,9 +226,20 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
           'Refreshed network state (Host mode)',
         );
       } else if (_p2pService.isInitialized) {
-        // Client mode: Re-scan without breaking existing connections
+        // Client mode: Force restart scanning
+        // We explicitly STOP first to fix "Zombie" states
+        debugPrint(
+          'NetworkProvider: Refreshing - Stopping previous scan first...',
+        );
+        await _p2pService.stopScanning();
 
-        // Don't clear connected devices - joinExistingNetwork now handles this
+        // Reset scanning state
+        _isDiscovering = false;
+        notifyListeners();
+
+        // Wait briefly for native cleanup
+        await Future.delayed(const Duration(milliseconds: 500));
+
         await joinExistingNetwork();
 
         await _logActivity(
@@ -221,7 +247,6 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
           'Refreshed device list (Client mode)',
         );
       } else {
-        // Not initialized yet, do nothing
         // Not initialized yet, do nothing
       }
     } catch (e) {
@@ -239,6 +264,9 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         _updateConnectedDeviceInList(updatedDevice);
         _isConnected = true;
+
+        // Reset Heartbeat timer on new connection
+        _lastHeartbeat = DateTime.now();
 
         await _logActivity(
           ActivityType.deviceConnected,
@@ -342,6 +370,13 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         // New device found
         _connectedDevices.add(device);
+        if (_isAdvertising) {
+          _notificationService.showNotification(
+            id: device.deviceId.hashCode,
+            title: 'New Device Discovered',
+            body: '${device.name} is nearby.',
+          );
+        }
       }
     }
     _isConnected = _connectedDevices.any((d) => d.isConnected);
@@ -349,6 +384,13 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleIncomingMessage(String message) {
+    // Intercept Heartbeat
+    if (message.contains('"type":"heartbeat"')) {
+      _lastHeartbeat = DateTime.now();
+      // debugPrint('NetworkProvider: Heartbeat received');
+      return; // Do not pass to UI
+    }
+
     // This is raw string, MessageProvider will parse it.
     // However, P2PService parses JSON types.
     // If it's a regular message, P2PService calls onMessageReceived.
@@ -385,7 +427,39 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleConnectionStatus(String status) {
-    // Can implement more specific logic here if needed
+    debugPrint('NetworkProvider: Connection status changed: $status');
+
+    if (status == 'client_disconnected') {
+      // Only react if we were previously connected.
+      // This prevents reaction to transient states during initial connection.
+      if (_isConnected) {
+        debugPrint(
+          'NetworkProvider: Lost connection to Host. Performing clean reset...',
+        );
+
+        _performDisconnectionCleanup();
+      }
+    }
+  }
+
+  // Helper to centralize cleanup logic
+  void _performDisconnectionCleanup() {
+    // 1. Reset Connection State locally
+    _isConnected = false;
+    _connectedDevices.clear();
+    notifyListeners();
+
+    // 2. Cleanup: Explicitly stop the previous client/scan to release native resources.
+    // This fixes the issue where devices couldn't see each other after valid disconnects.
+    _p2pService.stopScanning().then((_) {
+      // 3. Auto-Rejoin: Wait for OS to stabilize, then restart scanning.
+      if (!_isAdvertising) {
+        Future.delayed(const Duration(seconds: 3), () {
+          debugPrint('NetworkProvider: Restarting scan after disconnect...');
+          joinExistingNetwork();
+        });
+      }
+    });
   }
 
   void _updateConnectedDeviceInList(ConnectedDevice updatedDevice) {
@@ -395,6 +469,60 @@ class NetworkProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (index != -1) {
       _connectedDevices[index] = updatedDevice;
     }
+  }
+
+  // --- Heartbeat Logic ---
+
+  // Heartbeat / Watchdog Timers
+  Timer? _heartbeatTimer;
+  Timer? _watchdogTimer;
+  DateTime? _lastHeartbeat;
+
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    // Send heartbeat every 2 seconds
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_isAdvertising) {
+        final heartbeat = jsonEncode({'type': 'heartbeat'});
+        _p2pService.sendMessage(heartbeat);
+      }
+    });
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+  }
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    // Check every 2 seconds if we've lost heartbeats for > 8 seconds
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      // Run only if we think we are connected as a Client
+      if (_isConnected && !_isAdvertising) {
+        if (_lastHeartbeat != null) {
+          final diff = DateTime.now().difference(_lastHeartbeat!);
+          if (diff.inSeconds > 8) {
+            debugPrint(
+              'NetworkProvider: WATCHDOG TIMEOUT - Host seems dead (No heartbeat for ${diff.inSeconds}s)',
+            );
+            _lastHeartbeat =
+                null; // Reset so we don't trigger multiple times instantly
+            // Trigger Disconnection Logic
+            _performDisconnectionCleanup();
+          }
+        } else {
+          // If we are connected but never had a heartbeat?
+          // Maybe initialize it to Now() when connection starts
+          _lastHeartbeat = DateTime.now();
+        }
+      }
+    });
+  }
+
+  void _stopWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
   }
 
   Future<void> _logActivity(ActivityType type, String description) async {
