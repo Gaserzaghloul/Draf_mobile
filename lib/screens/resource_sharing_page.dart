@@ -4,6 +4,7 @@ import '../services/resource_provider.dart';
 import '../services/user_provider.dart';
 import '../services/network_provider.dart';
 import '../models/resource.dart';
+import '../services/voice_command_service.dart';
 
 enum ResourceCategory { medical, shelter, food }
 
@@ -15,8 +16,10 @@ class ResourceSharingPage extends StatefulWidget {
 }
 
 class _ResourceSharingPageState extends State<ResourceSharingPage> {
-  bool _showRequestedResources = false; // Track if showing requested resources
-  String? _lastFulfilledRequestId; // Track fulfillment for alerts.
+  // Toggle between "My Requests" and "Available Provisions".
+  bool _showRequestedResources = false;
+  // We track this so we don't spam the user with notifications for the same fulfillment.
+  String? _lastFulfilledRequestId;
 
   @override
   void initState() {
@@ -30,16 +33,61 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
         title: const Text('Resource Sharing'),
         backgroundColor: const Color(0xFF1E3A8A),
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            onPressed: () async {
+              // Voice shortcuts for creating requests quickly.
+              // E.g. "I need food" -> Auto creates a food request.
+              await VoiceCommandService().startListening(
+                context: context,
+                intents: {
+                  'medical,medicine': (ctx) async {
+                    await VoiceCommandService().speak(
+                      "Creating request for medical supplies.",
+                    );
+                    _createQuickRequest(ResourceCategory.medical);
+                  },
+                  'shelter,housing,sleep': (ctx) async {
+                    await VoiceCommandService().speak(
+                      "Creating request for shelter.",
+                    );
+                    _createQuickRequest(ResourceCategory.shelter);
+                  },
+                  'food,water,hungry,thirsty': (ctx) async {
+                    await VoiceCommandService().speak(
+                      "Creating request for food and water.",
+                    );
+                    _createQuickRequest(ResourceCategory.food);
+                  },
+                  'chat,message': (ctx) async {
+                    await VoiceCommandService().speak("Opening chat.");
+                    if (context.mounted) {
+                      Navigator.pop(context); // Return to dashboard
+                    }
+                  },
+                  'dashboard,home,back': (ctx) async {
+                    await VoiceCommandService().speak("Going to dashboard.");
+                    if (context.mounted) {
+                      Navigator.popUntil(context, (route) => route.isFirst);
+                    }
+                  },
+                },
+              );
+            },
+            icon: const Icon(Icons.mic),
+            tooltip: 'Voice commands',
+          ),
+        ],
       ),
       body: Consumer3<ResourceProvider, UserProvider, NetworkProvider>(
         builder:
             (context, resourceProvider, userProvider, networkProvider, child) {
-              // Build alert for fulfilled requests.
+              // Poll for happy news (requests getting filled).
               _checkForFulfillments(resourceProvider);
 
               return Column(
                 children: [
-                  // Two main action buttons
+                  // Big buttons at the top to switch modes.
                   _buildActionButtons(resourceProvider),
 
                   // Content area
@@ -63,7 +111,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Build the two main buttons: Request Resource and Provide Resource
+  // Build the two main buttons: Request Resource (Blue) and Provide Resource (Green)
   Widget _buildActionButtons(ResourceProvider resourceProvider) {
     return Container(
       margin: const EdgeInsets.all(16),
@@ -105,7 +153,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                 ),
-                // Show badge for incoming requests.
+                // Show badge for incoming requests if there are any new ones.
                 if (resourceProvider.incomingResourceRequestsCount > 0)
                   Positioned(
                     right: -4,
@@ -143,7 +191,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Build list of all resources (requests and provides)
+  // Build list of all resources (The mixed view).
   Widget _buildAllResourcesList(
     ResourceProvider resourceProvider,
     UserProvider userProvider,
@@ -186,13 +234,13 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Build list of requested resources (for Provide Resource view)
+  // Build list of specifically REQUESTED resources (The "Inbox" view).
   Widget _buildRequestedResourcesList(
     ResourceProvider resourceProvider,
     UserProvider userProvider,
     NetworkProvider networkProvider,
   ) {
-    // Combine local and incoming P2P requests.
+    // Merge requests we made locally with requests we heard from others on the network.
     final requestedResources = resourceProvider.resources
         .where((r) => r.requestType == ResourceRequestType.request)
         .toList();
@@ -244,7 +292,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Helper to get user name
+  // Tries to put a human name to an ID. Checks local user, then network list.
   String _getUserName(
     String userId,
     UserProvider userProvider,
@@ -256,18 +304,16 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
       return 'You';
     }
 
-    // 2. Use stored name in Resource if available
+    // 2. Use stored name in Resource if available (best guess)
     if (storedName != null &&
         storedName.isNotEmpty &&
         storedName != 'Unknown User') {
       return storedName;
     }
 
-    // 3. Fallback: Check connected devices
+    // 3. Last Resort: Scan connected devices
     final device = networkProvider.connectedDevices.cast<dynamic>().firstWhere(
-      (d) =>
-          d.deviceId == userId ||
-          d.id == userId, // Assuming deviceId matches userId for simplicity
+      (d) => d.deviceId == userId || d.id == userId,
       orElse: () => null,
     );
 
@@ -275,10 +321,10 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
       return device.name;
     }
 
-    return 'Unknown User ($userId)'; // Final Fallback
+    return 'Unknown User ($userId)'; // Gave up
   }
 
-  // Build card for requested resource (in Provide Resource view)
+  // This card appears in the "Provide Resource" list. It has a green button to fulfill the request.
   Widget _buildRequestedResourceCard(
     Resource resource,
     UserProvider userProvider,
@@ -406,7 +452,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Build card for all resources
+  // Generic card for the main list. Shows both Requests (Orange) and Provides (Green).
   Widget _buildResourceCard(
     Resource resource,
     UserProvider userProvider,
@@ -542,7 +588,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Show dialog to request a resource
+  // The form popup where users type what they need.
   void _showRequestResourceDialog() {
     showDialog(
       context: context,
@@ -630,35 +676,32 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
 
                     resourceProvider.addResource(resource);
 
-                    // Broadcast request. // REC-2
-                    resourceProvider
-                        .broadcastResourceRequest(
-                          // REC-2
-                          resource, // Changed from newResource to resource
-                        )
-                        .then((sent) {
-                          if (context.mounted) {
-                            if (sent) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Resource request broadcasted successfully',
-                                  ),
-                                  backgroundColor: Colors.green,
-                                ),
-                              );
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Request saved locally. Will retry sending automatically.',
-                                  ),
-                                  backgroundColor: Colors.orange,
-                                ),
-                              );
-                            }
-                          }
-                        });
+                    // Broadcast request to the whole network.
+                    resourceProvider.broadcastResourceRequest(resource).then((
+                      sent,
+                    ) {
+                      if (context.mounted) {
+                        if (sent) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Resource request broadcasted successfully',
+                              ),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Request saved locally. Will retry sending automatically.',
+                              ),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        }
+                      }
+                    });
 
                     Navigator.pop(context);
                   }
@@ -672,7 +715,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     );
   }
 
-  // Provide resource for a request
+  // The flow for when you want to be the hero and fulfill a request.
   void _provideResourceForRequest(Resource requestedResource) {
     final userProvider = Provider.of<UserProvider>(context, listen: false);
     if (userProvider.currentUser == null) return;
@@ -714,10 +757,6 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                   context,
                   listen: false,
                 );
-                final networkProvider = Provider.of<NetworkProvider>(
-                  context,
-                  listen: false,
-                ); // REC-3
                 final currentUser = userProvider.currentUser!;
 
                 // Create a provided resource entry
@@ -739,7 +778,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                   providedByName: currentUser.name,
                 );
 
-                // Update the requested resource to mark it as provided
+                // Update the requested resource to mark it as provided locally
                 final updatedRequest = requestedResource.copyWith(
                   providedBy: currentUser.id,
                   providedByName: currentUser.name,
@@ -748,7 +787,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                 resourceProvider.addResource(providedResource);
                 resourceProvider.updateResource(updatedRequest);
 
-                // Broadcast fulfillment.
+                // Tell everyone "I got this covered".
                 // Note: filePath would normally come from file picker, using empty for now
                 final filePath =
                     ''; // In real implementation, get from file picker
@@ -762,8 +801,8 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                       }
                     });
 
-                // Send alert to the requester (via message)
-                resourceProvider.sendProvisionMessage(
+                // Directly ping the person who asked.
+                resourceProvider.sendResourceNotification(
                   requestedResource.ownerId,
                   'Your resource request "${requestedResource.name}" has been provided by ${currentUser.name}!',
                 );
@@ -772,7 +811,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text(
-                      'Resource provided! The requester has been alerted.',
+                      'Resource provided! The requester has been notified.',
                     ),
                     backgroundColor: Colors.green,
                     duration: Duration(seconds: 3),
@@ -789,6 +828,54 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
         );
       },
     );
+  }
+
+  void _createQuickRequest(ResourceCategory category) {
+    final resourceProvider = Provider.of<ResourceProvider>(
+      context,
+      listen: false,
+    );
+    final userProvider = Provider.of<UserProvider>(context, listen: false);
+
+    if (userProvider.currentUser == null) return;
+
+    final resource = Resource(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: _defaultNameForCategory(category),
+      description: _defaultDescForCategory(category),
+      type: _resourceTypeForCategory(category),
+      filePath: '',
+      fileName: '',
+      fileSize: 0,
+      ownerId: userProvider.currentUser!.id,
+      ownerName: userProvider.currentUser!.name,
+      createdAt: DateTime.now(),
+      requestType: ResourceRequestType.request,
+      requestedBy: userProvider.currentUser!.id,
+    );
+    resourceProvider.addResource(resource);
+  }
+
+  String _defaultNameForCategory(ResourceCategory category) {
+    switch (category) {
+      case ResourceCategory.medical:
+        return 'Request: Medical supplies';
+      case ResourceCategory.shelter:
+        return 'Request: Shelter space';
+      case ResourceCategory.food:
+        return 'Request: Food and water';
+    }
+  }
+
+  String _defaultDescForCategory(ResourceCategory category) {
+    switch (category) {
+      case ResourceCategory.medical:
+        return 'First aid kit, bandages, antiseptic';
+      case ResourceCategory.shelter:
+        return 'Temporary shelter needed';
+      case ResourceCategory.food:
+        return 'Non-perishable food and bottled water needed';
+    }
   }
 
   ResourceType _resourceTypeForCategory(ResourceCategory category) {
@@ -812,7 +899,7 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     return '${date.day}/${date.month}/${date.year}';
   }
 
-  // Check for new fulfillments.
+  // Poll for happy news (requests getting filled).
   void _checkForFulfillments(ResourceProvider resourceProvider) {
     // Find resources that were just fulfilled (have providedBy and filePath)
     final fulfilledResources = resourceProvider.resources.where((r) {
@@ -823,32 +910,28 @@ class _ResourceSharingPageState extends State<ResourceSharingPage> {
     }).toList();
 
     if (fulfilledResources.isNotEmpty) {
-      // Show green alert for each new fulfillment
+      // Show green notification for each new fulfillment
       for (var resource in fulfilledResources) {
-        // Check for fulfillments. // REC-2
+        _lastFulfilledRequestId = resource.id;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _checkForFulfillments(resourceProvider); // REC-2
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: Colors.white),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Resource request fulfilled: ${resource.name}',
-                        style: const TextStyle(color: Colors.white),
-                      ),
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Resource request fulfilled: ${resource.name}',
+                      style: const TextStyle(color: Colors.white),
                     ),
-                  ],
-                ),
-                backgroundColor: Colors.green,
-                duration: const Duration(seconds: 4),
+                  ),
+                ],
               ),
-            );
-          }
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
         });
       }
     }
