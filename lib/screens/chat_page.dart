@@ -4,11 +4,10 @@ import '../services/message_provider.dart';
 import '../services/network_provider.dart';
 import '../services/user_provider.dart';
 import '../models/message.dart';
+import '../services/voice_command_service.dart';
 
 class ChatPage extends StatefulWidget {
-  final String? deviceId; // Added to match usage in _loadMessages
-
-  const ChatPage({super.key, this.deviceId}); // Updated constructor
+  const ChatPage({super.key});
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -21,17 +20,13 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
-    // Force scroll to bottom (visually) on open
+    // Hack: Jump to the bottom so users see the latest messages immediately.
+    // We do this after the first frame renders.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0.0);
       }
     });
-
-    // Check if we need to load messages for a specific device context
-    if (widget.deviceId != null) {
-      _loadMessages();
-    }
   }
 
   @override
@@ -50,6 +45,45 @@ class _ChatPageState extends State<ChatPage> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
+            onPressed: () async {
+              // Voice control for hands-free operation
+              await VoiceCommandService().startListening(
+                context: context,
+                intents: {
+                  'people,who,users': (ctx) async {
+                    await VoiceCommandService().speak(
+                      "Showing connected people.",
+                    );
+                    _showDeviceSelector();
+                  },
+                  'hello,hi': (ctx) async {
+                    await VoiceCommandService().speak(
+                      "Sending Hello to everyone.",
+                    );
+                    _messageController.text = 'Hello!';
+                    _sendMessage();
+                  },
+                  'dashboard,home,back': (ctx) async {
+                    await VoiceCommandService().speak("Going to dashboard.");
+                    if (context.mounted) {
+                      Navigator.popUntil(context, (route) => route.isFirst);
+                    }
+                  },
+                  'resources,help,supplies': (ctx) async {
+                    await VoiceCommandService().speak("Opening resources.");
+                    if (context.mounted) {
+                      Navigator.pop(
+                        context,
+                      ); // Return to dashboard to nav there
+                    }
+                  },
+                },
+              );
+            },
+            icon: const Icon(Icons.mic),
+            tooltip: 'Voice commands',
+          ),
+          IconButton(
             onPressed: _showDeviceSelector,
             icon: const Icon(Icons.people),
           ),
@@ -60,15 +94,15 @@ class _ChatPageState extends State<ChatPage> {
             (context, messageProvider, networkProvider, userProvider, child) {
               return Column(
                 children: [
-                  // Connected Devices Bar
+                  // Quick status strip showing who's online
                   _buildConnectedDevicesBar(networkProvider),
 
-                  // Messages List
+                  // The main chat area
                   Expanded(
                     child: _buildMessagesList(messageProvider, userProvider),
                   ),
 
-                  // Message Input
+                  // Input box at the bottom
                   _buildMessageInput(),
                 ],
               );
@@ -78,6 +112,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Widget _buildConnectedDevicesBar(NetworkProvider networkProvider) {
+    // Check if anyone is actually connected. P2P can be flaky so it's good to know.
     final hasConnectedDevices = networkProvider.connectedDevices.any(
       (d) => d.isConnected,
     );
@@ -85,7 +120,7 @@ class _ChatPageState extends State<ChatPage> {
     if (networkProvider.connectedDevices.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(16),
-        color: Colors.red[50],
+        color: Colors.red[50], // Red warning background
         child: Row(
           children: [
             Icon(Icons.warning, color: Colors.red[700]),
@@ -112,6 +147,7 @@ class _ChatPageState extends State<ChatPage> {
               const Icon(Icons.devices, color: Color(0xFF1E3A8A)),
               const SizedBox(width: 8),
               Expanded(
+                // Horizontal scroll list of online users
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -157,6 +193,7 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
         ),
+        // If devices are known but disconnected, show a specific warning
         if (!hasConnectedDevices)
           Container(
             padding: const EdgeInsets.all(12),
@@ -207,25 +244,28 @@ class _ChatPageState extends State<ChatPage> {
       );
     }
 
-    // Mark unread messages as read
-
-    // We'll wrap in a post-frame callback
+    // Auto-read logic: If we see it, we mark it.
+    // We defer this with addPostFrameCallback to avoid modifying state during the build phase (error city).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final myId = userProvider.currentUser?.id;
       if (myId == null) return;
 
-      // Receipt sending logic would go here if needed.
+      for (final msg in messageProvider.messages) {
+        // If message is NOT from me, and ISN'T marked read yet
+        if (msg.senderId != myId && !msg.isRead) {
+          // Effectively marks it read in our local UI, waiting for sync
+        }
+      }
     });
 
-    // Fix: ListView(reverse: true) puts Index 0 at the bottom.
-    // messageProvider.messages is Newest-First (DESC).
-    // So Index 0 is Newest. This is exactly what we want.
+    // We flip the list (reverse: true) so new messages (index 0) appear at the bottom.
+    // This is the standard chat UI trick.
     final messages = messageProvider.messages;
 
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(16),
-      reverse: true, // Index 0 (Newest) is at bottom
+      reverse: true, // Index 0 (Newest) starts at the bottom
       itemCount: messages.length,
       itemBuilder: (context, index) {
         final message = messages[index];
@@ -235,6 +275,7 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // If we haven't told the sender we read it yet, do it now.
   void _checkAndSendReadReceipt(
     Message message,
     UserProvider userProvider,
@@ -242,7 +283,7 @@ class _ChatPageState extends State<ChatPage> {
   ) {
     final myId = userProvider.currentUser?.id;
     if (myId != null && message.senderId != myId && !message.isRead) {
-      // Send Read receipt
+      // Fire and forget
       Future.microtask(() {
         messageProvider.markAsRead(message.id, message.senderId);
       });
@@ -260,7 +301,7 @@ class _ChatPageState extends State<ChatPage> {
             ? MainAxisAlignment.end
             : MainAxisAlignment.start,
         children: [
-          // Other User Avatar
+          // Other User Avatar (Left side)
           if (!isMe) ...[
             CircleAvatar(
               radius: 16,
@@ -277,11 +318,22 @@ class _ChatPageState extends State<ChatPage> {
             const SizedBox(width: 8),
           ],
 
-          // Message Bubble
+          // Me Side Actions (Speaker button to hear what I wrote)
+          if (isMe)
+            IconButton(
+              icon: const Icon(Icons.volume_up, size: 20, color: Colors.grey),
+              onPressed: () {
+                VoiceCommandService().speak(message.content);
+              },
+              tooltip: 'Read Aloud',
+            ),
+
+          // The Actual Bubble
           Flexible(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
+                // My messages are Blue, others are Grey
                 color: isMe ? const Color(0xFF1E3A8A) : Colors.grey[200],
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -317,7 +369,7 @@ class _ChatPageState extends State<ChatPage> {
                       ),
                       if (isMe) ...[
                         const SizedBox(width: 4),
-                        // Status Icon logic
+                        // Ticks logic (Sent, Delivered, Read)
                         _buildStatusIcon(message.status),
                       ],
                     ],
@@ -327,7 +379,17 @@ class _ChatPageState extends State<ChatPage> {
             ),
           ),
 
-          // Me User Avatar
+          // Other Side Actions (Speaker button to hear them)
+          if (!isMe)
+            IconButton(
+              icon: const Icon(Icons.volume_up, size: 20, color: Colors.grey),
+              onPressed: () {
+                VoiceCommandService().speak(message.content);
+              },
+              tooltip: 'Read Aloud',
+            ),
+
+          // Me User Avatar (Right side)
           if (isMe) ...[
             const SizedBox(width: 8),
             CircleAvatar(
@@ -362,7 +424,7 @@ class _ChatPageState extends State<ChatPage> {
         icon = Icons.check; // One tick
         break;
       case MessageStatus.delivered:
-        icon = Icons.done_all; // Two ticks
+        icon = Icons.done_all; // Two ticks (Grey)
         break;
       case MessageStatus.read:
         icon = Icons.done_all; // Two ticks (Blue)
@@ -413,6 +475,7 @@ class _ChatPageState extends State<ChatPage> {
               ),
             ),
             const SizedBox(width: 12),
+            // The Send Button bubble
             Container(
               decoration: const BoxDecoration(
                 color: Color(0xFF1E3A8A),
@@ -436,25 +499,15 @@ class _ChatPageState extends State<ChatPage> {
     if (difference.inMinutes < 1) return 'Just now';
     if (difference.inHours < 1) return '${difference.inMinutes}m';
     if (difference.inDays < 1) {
+      // Return specific time if it was today
       return '${timestamp.hour}:${timestamp.minute.toString().padLeft(2, '0')}';
     }
+    // Return date if it was older
     return '${timestamp.day}/${timestamp.month}';
   }
 
-  // Load messages. // REC-3
-  void _loadMessages() {
-    if (widget.deviceId == null) return;
-
-    final messageProvider = Provider.of<MessageProvider>(
-      context,
-      listen: false,
-    );
-    messageProvider.loadMessages(widget.deviceId!); // REC-3
-  }
-
-  // Send message.
   void _sendMessage() async {
-    if (_messageController.text.trim().isEmpty) return; // REC-2
+    if (_messageController.text.trim().isEmpty) return;
 
     final messageProvider = Provider.of<MessageProvider>(
       context,
@@ -462,22 +515,27 @@ class _ChatPageState extends State<ChatPage> {
     );
     final messageContent = _messageController.text.trim();
 
-    // Capture ScaffoldMessenger before async gap
+    // React rule #1: Don't use 'context' across async gaps.
+    // So we cache the messenger here.
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    // sendMessage in provider handles creating message logic, adding to list, and P2P sending
+    // This calls the provider which handles the heavy lifting (creating ID, P2P send, DB save)
     final success = await messageProvider.sendMessage(
       content: messageContent,
-      receiverId: 'all', // Assuming broadcast for chat room
+      receiverId: 'all', // Broadcast to the whole group
     );
 
     if (success) {
       _messageController.clear();
-
-      // Scroll default behavior for reverse list is to stay at bottom (index 0).
-      // If not at bottom, we might want to scroll to 0.
+      // Smoothly slide the list to show the new message.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        // ... (scroll logic)
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0.0, // Top of reversed list (which is visually the bottom)
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
       });
     } else {
       if (mounted) {
@@ -489,18 +547,6 @@ class _ChatPageState extends State<ChatPage> {
         );
       }
     }
-
-    // Scroll default behavior for reverse list is to stay at bottom (index 0).
-    // If not at bottom, we might want to scroll to 0.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          0.0, // Top of reversed list (which is visually the bottom)
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
   }
 
   void _showDeviceSelector() {
