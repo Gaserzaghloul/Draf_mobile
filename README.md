@@ -1,220 +1,131 @@
-# BEACON - Emergency Communication App
+# BEACON Project
 
-### 🔗 Device Discovery
-- Find nearby devices automatically
-- Show your device to others
-- Connect with nearby phones
+## Overview
 
-### 💬 Chat System
-- Send and receive text messages
-- Support different message types (text, image, file, voice)
-- Message status (sent, delivered, failed)
+BEACON is a peer-to-peer (P2P) emergency communication application designed to function in offline environments where cellular networks and internet connectivity are unavailable. The application utilizes Wi-Fi Direct technology to create local mesh networks, enabling users to discover nearby devices, exchange messages, and share vital resources such as food, water, and medical supplies.
 
-### 🆘 Emergency SOS Alerts
-- Send emergency alerts to all connected devices
-- Voice announcements for alerts
-- Priority system for emergency messages
+This project prioritizes data security and accessibility, featuring an encrypted local database for persistent storage and integrated voice command functionality for hands-free operation.
 
-### 📁 File Sharing
-- Share files between connected devices
-- Support different file types (documents, images, videos, audio)
-- Track download and upload status
+## Key Features
 
-### 👤 Profile Management
-- Create and edit your profile
-- Activity statistics
-- Activity history
+### 1. Offline Peer-to-Peer Communication
 
-## Technologies Used
+- **Device Discovery**: Automatically scans for and identifies nearby devices using P2P technology.
+- **Ad-Hoc Networking**: Functions as either a Group Owner (Host) or a Client to establish local networks without a central router.
+- **Connection Management**: Handles connection lifecycles, including connecting, disconnecting, and handling broad network updates.
 
-### Frontend
-- **Flutter**: Cross-platform framework
-- **Provider**: State management
-- **Material Design 3**: Modern UI design
+### 2. Secure Data Storage
 
-### Backend & Database
-- **SQLite**: Local database
-- **Sqflite**: Flutter SQLite library
+- **Encryption**: All local data is stored in an SQLite database encrypted with SQLCipher.
+- **Data Persistence**: User profiles, chat history, resource requests, and activity logs are persisted locally.
+- **Secure Key Management**: Encryption keys are securely generated and stored using secure storage mechanisms.
 
-### Additional Libraries
-- **flutter_tts**: Text-to-speech
-- **file_picker**: File selection
-- **permission_handler**: Permission management
-- **uuid**: Unique ID generation
+### 3. Real-Time Messaging using Wi-Fi Direct
 
-## Project Structure
+- **Instant Chat**: sending and receiving text messages between connected peers.
+- **SOS Alerts**: Dedicated functionality to broadcast high-priority emergency alerts to all connected devices.
+- **Status Updates**: Automatic sharing of device availability and status.
 
-```
-lib/
-├── models/           # Data models
-│   ├── user.dart
-│   ├── connected_device.dart
-│   ├── message.dart
-│   ├── resource.dart
-│   └── activity.dart
-├── database/         # Database services
-│   └── database_service.dart
-├── services/         # App services
-│   └── app_state.dart
-├── screens/          # UI screens
-│   ├── landing_page.dart
-│   ├── profile_page.dart
-│   ├── network_dashboard_page.dart
-│   ├── chat_page.dart
-│   └── resource_sharing_page.dart
-├── widgets/          # Custom UI components
-└── main.dart         # App entry point
-```
+### 4. Resource Sharing System
 
-## How to Run the App
+- **Request & Provide**: Users can broadcast requests for specific categories of supplies (Medical, Shelter, Food).
+- **Fulfillment Tracking**: Tracks who is providing resources for specific requests.
+- **Broadcast Updates**: Updates on resource status are propagated across the local network.
+
+### 5. Accessibility
+
+- **Voice Commands**: Integrated speech-to-text allows users to navigate the app and perform actions (e.g., sending SOS, checking status) using voice commands.
+- **Text-to-Speech**: Incoming messages and alerts can be read aloud, aiding users in high-stress or low-visibility situations.
+
+### 6. User Management
+
+- **Profile System**: Users can create and manage detailed profiles, including emergency contact information and medical details.
+- **Activity Logging**: A local log tracks all network interactions, ensuring a record of events is maintained.
+
+## Technical Architecture
+
+The application follows a modular architecture using the Provider pattern for state management. The codebase is organized into distinct layers to separate concerns:
+
+### Directory Structure
+
+- **lib/database**: Contains `DatabaseService`, handling all SQLite interactions, encryption, and schema migrations.
+- **lib/models**: Data classes definition (User, Message, Resource, ConnectedDevice, Activity) with serialization logic.
+- **lib/screens**: UI components and screens (Dashboard, Chat, Profile, Resource Sharing).
+- **lib/services**: Core business logic and external service integrations:
+  - `P2PService`: Manages Wi-Fi Direct APIs.
+  - `VoiceCommandService`: Handles speech recognition and synthesis.
+  - `NotificationService`: Manages local system notifications.
+  - `*Provider`: Classes responsible for state management and bridging UI with services.
+- **lib/main.dart**: Application entry point and theme configuration.
+
+### Dependencies
+
+The project relies on the following key libraries:
+
+- **Flutter SDK**: The core framework.
+- **Provider**: For dependency injection and state management.
+- **Flutter P2P Connection**: For handling Wi-Fi Direct discovery and connection.
+- **Sqflite SQLCipher**: For database encryption.
+- **Speech to Text & Flutter TTS**: For voice interaction.
+
+## Setup and Installation
 
 ### Prerequisites
-- Flutter SDK (version 3.9.2 or higher)
-- Android Studio or VS Code
-- Android emulator or real Android device
 
-### Step-by-Step Instructions
+- Flutter SDK (Version 3.0.0 or higher)
+- Dart SDK
+- Android Studio / VS Code
+- A physical Android device (Required for P2P testing as Wi-Fi Direct is not supported on emulators)
 
-1. **Open Terminal/Command Prompt**
-   ```bash
-   cd /path/to/your/project/beacon_app
-   ```
+### Installation
 
-2. **Install Dependencies**
-   ```bash
-   flutter pub get
-   ```
+1.  Navigate to the project directory:
+    ```bash
+    cd beacon_app
+    ```
+2.  Install dependencies:
+    ```bash
+    flutter pub get
+    ```
+3.  Run the application:
+    ```bash
+    flutter run
+    ```
 
-3. **Start Android Emulator**
-   - Open Android Studio
-   - Go to Tools → AVD Manager
-   - Click "Play" button next to your emulator
-   - OR use command line:
-   ```bash
-   flutter emulators --launch Pixel_6a
-   ```
+### Permissions
 
-4. **Run the App**
-   ```bash
-   flutter run
-   ```
+The application requires the following runtime permissions to function correctly:
 
-### Alternative Ways to Run
+- **Location**: Required for Wi-Fi Direct peer discovery.
+- **Microphone**: Required for voice commands.
+- **Storage**: Required for database and file handling.
+- **Nearby Devices**: Required for Android 12+ peer discovery.
 
-**Option 1: Run on macOS (if you're on Mac)**
+## Testing
+
+The project includes a comprehensive testing suite to ensure reliability and performance.
+
+### 1. Unit & Widget Tests
+
+Located in the `test` directory, these tests verify individual functions, models, and UI components.
+
+- **Unit Tests**: Verify the logic of data models (e.g., `test/models/user_test.dart`).
+- **Widget Tests**: Verify the UI rendering and interaction (e.g., `test/widget_test.dart`).
+
+To run unit and widget tests:
+
 ```bash
-flutter run -d macos
+flutter test
 ```
 
-**Option 2: Run on specific device**
+### 2. Integration Tests
+
+Located in the `integration_test` directory, these tests simulate a complete user session on a physical device or emulator to verify end-to-end functionality.
+
+- **End-to-End Test**: `integration_test/app_test.dart` verifies the complete application flow.
+
+To run integration tests:
+
 ```bash
-flutter devices  # See available devices
-flutter run -d [device-id]
+flutter test integration_test/app_test.dart
 ```
-
-**Option 3: Run in release mode**
-```bash
-flutter run --release
-```
-
-## Required Permissions
-
-### Android Permissions
-- `INTERNET`: For network connection
-- `ACCESS_WIFI_STATE`: Access Wi-Fi state
-- `ACCESS_NETWORK_STATE`: Access network state
-- `CHANGE_WIFI_STATE`: Change Wi-Fi state
-- `ACCESS_FINE_LOCATION`: Access precise location
-- `ACCESS_COARSE_LOCATION`: Access approximate location
-- `READ_EXTERNAL_STORAGE`: Read external files
-- `WRITE_EXTERNAL_STORAGE`: Write external files
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue: "System UI isn't responding"**
-- Solution: Restart the emulator
-- Close emulator and start again
-
-**Issue: "Build failed"**
-- Solution: Clean and rebuild
-```bash
-flutter clean
-flutter pub get
-flutter run
-```
-
-**Issue: "No devices found"**
-- Solution: Check if emulator is running
-```bash
-flutter devices
-```
-
-**Issue: "Gradle build failed"**
-- Solution: Update Android SDK
-- Open Android Studio → SDK Manager → Update SDK
-
-### If App Won't Load
-
-1. **Check Flutter Doctor**
-   ```bash
-   flutter doctor
-   ```
-
-2. **Clean Project**
-   ```bash
-   flutter clean
-   flutter pub get
-   ```
-
-3. **Restart Emulator**
-   - Close emulator completely
-   - Start again from Android Studio
-
-4. **Try Different Emulator**
-   ```bash
-   flutter emulators --launch Medium_Phone_API_36.1
-   ```
-
-## App Screens
-
-### 1. Landing Page
-- Welcome screen with app logo
-- Options to join network or start new network
-- Profile settings access
-
-### 2. Profile Page
-- View and edit user profile
-- Activity statistics
-- Profile management
-
-### 3. Network Dashboard
-- Shows connected devices
-- Quick actions (Chat, Share, SOS)
-- Network status
-
-### 4. Chat Page
-- Send and receive messages
-- Device list
-- Message history
-
-### 5. Resource Sharing
-- Share files with connected devices
-- Download shared files
-- File management
-
-## Development Status
-
-### ✅ Completed Features
-- [x] Basic UI screens
-- [x] Database setup
-- [x] State management
-- [x] Profile management
-- [x] File sharing UI
-
-### 🚧 In Progress جاري الطبخ
-- [ ] P2P device discovery
-- [ ] Real message sending
-- [ ] Push notifications
-- [ ] File transfer
